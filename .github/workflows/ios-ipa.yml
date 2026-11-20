@@ -1,0 +1,74 @@
+name: MeloCafe v1.2 iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Build iPhone ARM64 IPA
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - name: Checkout uploaded source parts
+        uses: actions/checkout@v4
+
+      - name: Reassemble and extract source
+        run: |
+          set -euo pipefail
+          cat source.part* > source.zip
+          unzip -q source.zip -d source
+          PROJECT="$(find source -name MeloCafe.xcodeproj -print -quit)"
+          test -n "$PROJECT"
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Inspect Xcode project
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -list -project "$PROJECT"
+
+      - name: Resolve Swift packages
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT" \
+            -scheme MeloCafe
+
+      - name: Build unsigned iOS app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme MeloCafe \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            PRODUCT_BUNDLE_IDENTIFIER=com.zarn17521.MeloCafe \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MeloCafe.app"
+          test -d "$APP" || { echo "MeloCafe.app was not produced" >&2; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$APP" "$RUNNER_TEMP/ipa/Payload/MeloCafe.app"
+          (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/MeloCafe-v1.2-iOS-unsigned.ipa" Payload)
+          ls -lh "$GITHUB_WORKSPACE/MeloCafe-v1.2-iOS-unsigned.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeloCafe-v1.2-iOS-unsigned
+          path: MeloCafe-v1.2-iOS-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 3
