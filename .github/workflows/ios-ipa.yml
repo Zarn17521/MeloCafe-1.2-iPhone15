@@ -15,14 +15,35 @@ jobs:
       - name: Checkout uploaded source parts
         uses: actions/checkout@v4
 
+      - name: Free runner disk space
+        run: |
+          set -euo pipefail
+          echo "Disk space before cleanup:"
+          df -h
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData/"* || true
+          rm -rf "$HOME/Library/Caches/"* || true
+          rm -rf "$HOME/Library/Developer/CoreSimulator/Caches/"* || true
+          echo "Disk space after cleanup:"
+          df -h "$RUNNER_TEMP"
+
       - name: Reassemble and extract source
         run: |
           set -euo pipefail
-          cat source.part* > source.zip
-          unzip -q source.zip -d source
-          PROJECT="$(find source -name MeloCafe.xcodeproj -print -quit)"
-          test -n "$PROJECT"
+          WORK_DIR="$RUNNER_TEMP/melocafe-build"
+          SOURCE_DIR="$WORK_DIR/source"
+          mkdir -p "$SOURCE_DIR"
+          cat "$GITHUB_WORKSPACE"/source.part* > "$WORK_DIR/source.zip"
+          echo "Archive size:"
+          ls -lh "$WORK_DIR/source.zip"
+          echo "Available disk space:"
+          df -h "$RUNNER_TEMP"
+          unzip -q "$WORK_DIR/source.zip" -d "$SOURCE_DIR"
+          rm -f "$WORK_DIR/source.zip"
+          PROJECT="$(find "$SOURCE_DIR" -name MeloCafe.xcodeproj -print -quit)"
+          test -n "$PROJECT" || { echo "MeloCafe.xcodeproj not found after extraction" >&2; exit 1; }
           echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+          echo "Extracted project: $PROJECT"
+          df -h "$RUNNER_TEMP"
 
       - name: Inspect Xcode project
         run: |
