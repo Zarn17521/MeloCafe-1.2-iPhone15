@@ -73,6 +73,78 @@ jobs:
           echo "Extracted project: $PROJECT"
           df -h "$RUNNER_TEMP"
 
+      - name: Prepare Cemu iOS framework project
+        run: |
+          set -euo pipefail
+          ROOT="$(dirname "$(dirname "$PROJECT")")"
+          echo "Cemu source root: $ROOT"
+          # The uploaded source archive does not contain Git submodule contents.
+          while read -r key path; do
+            name="${key#submodule.}"
+            name="${name%.path}"
+            url="$(git config -f "$ROOT/.gitmodules" "submodule.$name.url")"
+            if [ -n "$url" ]; then
+              rm -rf "$ROOT/$path"
+              mkdir -p "$(dirname "$ROOT/$path")"
+              echo "Cloning $name from $url"
+              git clone --depth 1 "$url" "$ROOT/$path"
+            fi
+          done < <(git config -f "$ROOT/.gitmodules" --get-regexp '^submodule\\..*\\.path
+      - name: Resolve Swift packages
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT" \
+            -scheme MeloCafe
+
+      - name: Build unsigned iOS app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme MeloCafe \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            PRODUCT_BUNDLE_IDENTIFIER=com.zarn17521.MeloCafe \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MeloCafe.app"
+          test -d "$APP" || { echo "MeloCafe.app was not produced" >&2; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$APP" "$RUNNER_TEMP/ipa/Payload/MeloCafe.app"
+          (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/MeloCafe-v1.2-iOS-unsigned.ipa" Payload)
+          ls -lh "$GITHUB_WORKSPACE/MeloCafe-v1.2-iOS-unsigned.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeloCafe-v1.2-iOS-unsigned
+          path: MeloCafe-v1.2-iOS-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 3
+)
+          cmake -S "$ROOT" -B "$ROOT/build" -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_VCPKG=ON
+          test -d "$ROOT/build/Cemu.xcodeproj" || {
+            echo "CMake did not generate build/Cemu.xcodeproj" >&2
+            exit 1
+          }
+          echo "Cemu Xcode project generated successfully."
+
       - name: Inspect Xcode project
         run: |
           set -euo pipefail
