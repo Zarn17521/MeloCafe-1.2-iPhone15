@@ -37,7 +37,35 @@ jobs:
           ls -lh "$WORK_DIR/source.zip"
           echo "Available disk space:"
           df -h "$RUNNER_TEMP"
-          unzip -q "$WORK_DIR/source.zip" -d "$SOURCE_DIR"
+          python3 - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          archive = Path(os.environ["RUNNER_TEMP"]) / "melocafe-build" / "source.zip"
+          destination = Path(os.environ["RUNNER_TEMP"]) / "melocafe-build" / "source"
+          root = destination.resolve()
+          with zipfile.ZipFile(archive) as zf:
+              bad = zf.testzip()
+              if bad:
+                  raise SystemExit(f"ZIP integrity check failed at: {bad!r}")
+              for info in zf.infolist():
+                  # Strip two invisible right-to-left marks in the archive filename.
+                  name = info.filename.replace("\\u200f", "")
+                  target = (destination / name).resolve()
+                  if os.path.commonpath([str(root), str(target)]) != str(root):
+                      raise SystemExit(f"Unsafe ZIP path: {info.filename!r}")
+                  if info.is_dir():
+                      target.mkdir(parents=True, exist_ok=True)
+                  else:
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      with zf.open(info) as src, open(target, "wb") as dst:
+                          while True:
+                              chunk = src.read(1024 * 1024)
+                              if not chunk:
+                                  break
+                              dst.write(chunk)
+          PY
           rm -f "$WORK_DIR/source.zip"
           PROJECT="$(find "$SOURCE_DIR" -name MeloCafe.xcodeproj -print -quit)"
           test -n "$PROJECT" || { echo "MeloCafe.xcodeproj not found after extraction" >&2; exit 1; }
