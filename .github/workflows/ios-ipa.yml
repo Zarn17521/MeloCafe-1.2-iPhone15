@@ -16,6 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Free runner disk space
+        shell: bash
         run: |
           set -euo pipefail
           echo "Disk space before cleanup:"
@@ -27,6 +28,7 @@ jobs:
           df -h "$RUNNER_TEMP"
 
       - name: Reassemble and extract source
+        shell: bash
         run: |
           set -euo pipefail
           WORK_DIR="$RUNNER_TEMP/melocafe-build"
@@ -35,8 +37,6 @@ jobs:
           cat "$GITHUB_WORKSPACE"/source.part* > "$WORK_DIR/source.zip"
           echo "Archive size:"
           ls -lh "$WORK_DIR/source.zip"
-          echo "Available disk space:"
-          df -h "$RUNNER_TEMP"
           python3 - <<'PY'
           import os
           import zipfile
@@ -50,8 +50,7 @@ jobs:
               if bad:
                   raise SystemExit(f"ZIP integrity check failed at: {bad!r}")
               for info in zf.infolist():
-                  # Strip two invisible right-to-left marks in the archive filename.
-                  name = info.filename.replace("\\u200f", "")
+                  name = info.filename.replace("\u200f", "")
                   target = (destination / name).resolve()
                   if os.path.commonpath([str(root), str(target)]) != str(root):
                       raise SystemExit(f"Unsafe ZIP path: {info.filename!r}")
@@ -68,71 +67,32 @@ jobs:
           PY
           rm -f "$WORK_DIR/source.zip"
           PROJECT="$(find "$SOURCE_DIR" -name MeloCafe.xcodeproj -print -quit)"
-          test -n "$PROJECT" || { echo "MeloCafe.xcodeproj not found after extraction" >&2; exit 1; }
+          test -n "$PROJECT" || { echo "MeloCafe.xcodeproj not found" >&2; exit 1; }
           echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
           echo "Extracted project: $PROJECT"
           df -h "$RUNNER_TEMP"
 
       - name: Prepare Cemu iOS framework project
+        shell: bash
         run: |
           set -euo pipefail
           ROOT="$(dirname "$(dirname "$PROJECT")")"
           echo "Cemu source root: $ROOT"
-          # The uploaded source archive does not contain Git submodule contents.
-          while read -r key path; do
-            name="${key#submodule.}"
-            name="${name%.path}"
-            url="$(git config -f "$ROOT/.gitmodules" "submodule.$name.url")"
-            if [ -n "$url" ]; then
-              rm -rf "$ROOT/$path"
-              mkdir -p "$(dirname "$ROOT/$path")"
-              echo "Cloning $name from $url"
-              git clone --depth 1 "$url" "$ROOT/$path"
-            fi
-          done < <(git config -f "$ROOT/.gitmodules" --get-regexp '^submodule\\..*\\.path
-      - name: Resolve Swift packages
-        run: |
-          set -euo pipefail
-          xcodebuild -resolvePackageDependencies \
-            -project "$PROJECT" \
-            -scheme MeloCafe
-
-      - name: Build unsigned iOS app
-        run: |
-          set -euo pipefail
-          xcodebuild \
-            -project "$PROJECT" \
-            -scheme MeloCafe \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY='' \
-            PRODUCT_BUNDLE_IDENTIFIER=com.zarn17521.MeloCafe \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=YES \
-            build
-
-      - name: Package unsigned IPA
-        run: |
-          set -euo pipefail
-          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MeloCafe.app"
-          test -d "$APP" || { echo "MeloCafe.app was not produced" >&2; exit 1; }
-          mkdir -p "$RUNNER_TEMP/ipa/Payload"
-          ditto "$APP" "$RUNNER_TEMP/ipa/Payload/MeloCafe.app"
-          (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/MeloCafe-v1.2-iOS-unsigned.ipa" Payload)
-          ls -lh "$GITHUB_WORKSPACE/MeloCafe-v1.2-iOS-unsigned.ipa"
-
-      - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MeloCafe-v1.2-iOS-unsigned
-          path: MeloCafe-v1.2-iOS-unsigned.ipa
-          if-no-files-found: error
-          retention-days: 3
-)
+          if [ -f "$ROOT/.gitmodules" ]; then
+            while read -r key path; do
+              name="${key#submodule.}"
+              name="${name%.path}"
+              url="$(git config -f "$ROOT/.gitmodules" "submodule.$name.url")"
+              if [ -z "$url" ]; then
+                echo "Missing URL for submodule $name" >&2
+                exit 1
+              fi
+              if [ ! -e "$ROOT/$path/.git" ] && [ -z "$(find "$ROOT/$path" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)" ]; then
+                echo "Cloning submodule $name from $url"
+                git clone --depth 1 "$url" "$ROOT/$path"
+              fi
+            done < <(git config -f "$ROOT/.gitmodules" --get-regexp '^submodule\..*\.path$')
+          fi
           cmake -S "$ROOT" -B "$ROOT/build" -G Xcode \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT=iphoneos \
@@ -146,12 +106,14 @@ jobs:
           echo "Cemu Xcode project generated successfully."
 
       - name: Inspect Xcode project
+        shell: bash
         run: |
           set -euo pipefail
           xcodebuild -version
           xcodebuild -list -project "$PROJECT"
 
       - name: Resolve Swift packages
+        shell: bash
         run: |
           set -euo pipefail
           xcodebuild -resolvePackageDependencies \
@@ -159,6 +121,7 @@ jobs:
             -scheme MeloCafe
 
       - name: Build unsigned iOS app
+        shell: bash
         run: |
           set -euo pipefail
           xcodebuild \
@@ -177,6 +140,7 @@ jobs:
             build
 
       - name: Package unsigned IPA
+        shell: bash
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MeloCafe.app"
